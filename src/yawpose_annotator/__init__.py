@@ -1,0 +1,1 @@
+"""YawPose annotation tool."""
