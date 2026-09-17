@@ -1,0 +1,63 @@
+name: restore official Irasutoya assets
+
+on:
+  push:
+    branches:
+      - chatgpt/import-local-ui-changes
+
+permissions:
+  contents: write
+
+jobs:
+  restore-assets:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/import-local-ui-changes
+
+      - name: Download official assets from Irasutoya
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p resources
+          curl -fL --retry 3 --retry-delay 2 \
+            'https://1.bp.blogspot.com/-UCn48dF0r5g/ViipiStYohI/AAAAAAAAz7E/7zQcPJ5Zefs/s800/topview_man.png' \
+            -o resources/topview_man.png
+          curl -fL --retry 3 --retry-delay 2 \
+            'https://1.bp.blogspot.com/-YUEWU9TCxo4/W1vg-2T8xOI/AAAAAAABNs8/XYUrQMS-tE0JKhDLPkrIF0KKJBLrq7FlgCLcBGAs/s800/body_koutoubu_normal_man.png' \
+            -o resources/body_koutoubu_normal_man.png
+
+      - name: Verify PNG files
+        shell: python
+        run: |
+          from pathlib import Path
+          import struct
+
+          expected = {
+              Path('resources/topview_man.png'): (800, 800),
+              Path('resources/body_koutoubu_normal_man.png'): (597, 723),
+          }
+          for path, dims in expected.items():
+              data = path.read_bytes()
+              if data[:8] != b'\x89PNG\r\n\x1a\n':
+                  raise SystemExit(f'{path}: invalid PNG signature')
+              width, height = struct.unpack('>II', data[16:24])
+              if (width, height) != dims:
+                  raise SystemExit(f'{path}: unexpected dimensions {(width, height)}')
+              print(f'{path}: {len(data)} bytes, {width}x{height}')
+
+      - name: Commit official assets and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add resources/topview_man.png resources/body_koutoubu_normal_man.png
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: restore official Irasutoya UI assets'
+          fi
+          git rm .github/workflows/restore-irasutoya-assets.yml
+          git commit -m 'chore: remove temporary asset restore workflow'
+          git push origin HEAD:chatgpt/import-local-ui-changes
