@@ -60,13 +60,16 @@ def main() -> None:
         qa_records=qa_records,
         page_size=args.page_size,
     )
-    AnnotatorUI(service, root, export_path).build()
+    def build_ui() -> None:
+        AnnotatorUI(service, root, export_path).build()
+
     ui.run(
+        root=build_ui,
         host=args.host,
         port=args.port,
         title="YawPose Annotator",
         reload=False,
-        show=True,
+        show=False,
     )
 
 
