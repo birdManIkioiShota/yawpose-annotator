@@ -23,23 +23,65 @@ class AnnotatorUI:
         self.export_path = export_path.resolve()
         self.cards: dict[str, object] = {}
         self.contents: dict[str, object] = {}
+        self.control_containers: dict[str, object] = {}
         self.status_label = None
         self.page_label = None
         self.grid = None
+        self.pagination_row = None
         self.filtered_count = 0
         self.page_count = 1
 
     def build(self) -> None:
         app.add_static_files("/dataset", str(self.dataset_root))
+        resources_root = Path(__file__).resolve().parents[2] / "resources"
+        app.add_static_files("/resources", str(resources_root))
         ui.add_css(
             """
             body { background: #111827; color: #e5e7eb; }
             .pose-card { background: #1f2937; padding: 6px; cursor: pointer; }
             .pose-card-selected { outline: 4px solid #facc15; }
             .pose-card-dirty { box-shadow: inset 0 0 0 2px #38bdf8; }
-            .pose-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
+            .pose-photo { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
             .pose-meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-
+            .pose-indicator {
+                position: absolute;
+                bottom: 4px;
+                width: 72px;
+                height: 72px;
+                overflow: hidden;
+                border: 1px solid rgba(229, 231, 235, .9);
+                border-radius: 8px;
+                background: rgba(0, 0, 0, .62);
+            }
+            .pose-indicator-pitch { left: 4px; }
+            .pose-indicator-yaw { right: 4px; }
+            .pose-indicator-figure {
+                position: absolute;
+                left: 18px;
+                top: 18px;
+                width: 36px;
+                height: 36px;
+                object-fit: contain;
+                opacity: .88;
+                transform-origin: center;
+            }
+            .pose-indicator svg { position: absolute; inset: 0; }
+            .pose-yaw-controls {
+                position: absolute;
+                top: 4px;
+                left: 4px;
+                right: 4px;
+                z-index: 2;
+                padding: 4px;
+                border-radius: 6px;
+                background: rgba(17, 24, 39, .82);
+            }
+            .pose-yaw-controls .q-btn {
+                min-width: 0;
+                min-height: 24px;
+                padding: 0 4px;
+                font-size: 10px;
+            }
             .annotator-field .q-field__native,
             .annotator-field .q-field__input,
             .annotator-field .q-field__label,
@@ -126,24 +168,7 @@ class AnnotatorUI:
             ui.button("Apply filter", on_click=apply_filter)
             ui.button("Save (Enter)", on_click=self._save)
             ui.button("Export merged labels", on_click=self._export)
-
-        with ui.row().classes("items-center gap-2 flex-wrap"):
-            ui.button("Prev page", on_click=lambda: self._move_page(-1))
-            ui.button("Next page", on_click=lambda: self._move_page(1))
-            ui.separator().props("vertical")
-            ui.button("Yaw -10", on_click=lambda: self._adjust_yaw(-10))
-            ui.button("Yaw -1", on_click=lambda: self._adjust_yaw(-1))
-            ui.button("Yaw +1", on_click=lambda: self._adjust_yaw(1))
-            ui.button("Yaw +10", on_click=lambda: self._adjust_yaw(10))
-            for label, value in [
-                ("front 0", 0),
-                ("left 90", 90),
-                ("back 180", 180),
-                ("right 270", 270),
-            ]:
-                ui.button(label, on_click=lambda value=value: self._set_yaw(value))
-            ui.button("Reset", on_click=self._reset)
-
+        self.pagination_row = ui.row().classes("items-center gap-1 flex-wrap")
         ui.label(
             "Keys: ←/→ yaw ±1°, Shift+←/→ ±10°, ↑/↓ pitch ±1°, "
             "Shift+↑/↓ ±10°, J/K selection, PgUp/PgDn page, R reset, Enter save"
@@ -154,6 +179,7 @@ class AnnotatorUI:
             return
         self.cards.clear()
         self.contents.clear()
+        self.control_containers.clear()
         self.grid.clear()
         rows = self.service.page_records()
         self.filtered_count = len(self.service.filtered())
@@ -163,11 +189,42 @@ class AnnotatorUI:
         with self.grid:
             for pose in rows:
                 with ui.card().classes(self._card_classes(pose)) as card:
-                    content = ui.html(self._tile_html(pose), sanitize=False).classes("w-full")
+                    with ui.element("div").classes("relative w-full"):
+                        content = ui.html(
+                            self._tile_html(pose), sanitize=False
+                        ).classes("w-full")
+                        controls = ui.element("div")
                     card.on("click", lambda _, image=pose.record.image: self._select(image))
                     self.cards[pose.record.image] = card
                     self.contents[pose.record.image] = content
+                    self.control_containers[pose.record.image] = controls
+                    self._refresh_controls(pose.record.image)
         self._update_page_label()
+        self._render_pagination()
+
+    def _refresh_controls(self, image: str) -> None:
+        container = self.control_containers.get(image)
+        if container is None:
+            return
+        container.clear()
+        if image != self.service.selected_image:
+            return
+        with container:
+            self._build_image_yaw_controls()
+
+    def _build_image_yaw_controls(self) -> None:
+        with ui.row().classes(
+            "pose-yaw-controls items-center gap-1 no-wrap"
+        ):
+            ui.button("FLIP", on_click=self._flip_yaw).props(
+                "dense no-caps"
+            ).classes("flex-1")
+            ui.button("+180°", on_click=lambda: self._adjust_yaw(180)).props(
+                "dense no-caps"
+            ).classes("flex-1")
+            ui.button("RESET", on_click=self._reset).props(
+                "dense no-caps"
+            ).classes("flex-1")
 
     def _refresh_pose(self, image: str) -> None:
         pose = self.service.effective(image)
@@ -185,6 +242,15 @@ class AnnotatorUI:
         for target in {previous, image}:
             if target and target in self.cards:
                 self._refresh_pose(target)
+                self._refresh_controls(target)
+
+    def _flip_yaw(self) -> None:
+        image = self.service.selected_image
+        if image is None:
+            return
+        current = self.service.effective(image).yaw
+        if self.service.set_yaw((-current) % 360.0):
+            self._refresh_pose(image)
 
     def _adjust_yaw(self, delta: float) -> None:
         image = self.service.selected_image
@@ -224,6 +290,36 @@ class AnnotatorUI:
         self.service.move_page(delta)
         self._render_page()
         self._update_status()
+
+    def _go_to_page(self, page: int) -> None:
+        self.service.page = max(0, min(page, self.service.page_count - 1))
+        self.service.selected_image = None
+        self._render_page()
+        self._update_status()
+
+    def _render_pagination(self) -> None:
+        if self.pagination_row is None:
+            return
+        self.pagination_row.clear()
+        with self.pagination_row:
+            previous = ui.button("<", on_click=lambda: self._move_page(-1)).props(
+                "flat dense"
+            )
+            previous.set_enabled(self.service.page > 0)
+            for item in _pagination_items(self.service.page + 1, self.page_count):
+                if item is None:
+                    ui.label("…").classes("px-1 text-gray-400")
+                    continue
+                button = ui.button(
+                    str(item),
+                    on_click=lambda page=item: self._go_to_page(page - 1),
+                ).props("flat dense")
+                if item == self.service.page + 1:
+                    button.props("color=amber")
+            next_button = ui.button(">", on_click=lambda: self._move_page(1)).props(
+                "flat dense"
+            )
+            next_button.set_enabled(self.service.page < self.page_count - 1)
 
     def _move_selection(self, delta: int) -> None:
         previous = self.service.selected_image
@@ -287,8 +383,10 @@ class AnnotatorUI:
     def _tile_html(self, pose: EffectivePose) -> str:
         rel = pose.record.image_path.relative_to(self.dataset_root).as_posix()
         url = "/dataset/" + quote(rel, safe="/")
-        yaw_svg = _indicator_svg(pose.record.yaw, pose.yaw, mode="yaw")
-        pitch_svg = _indicator_svg(pose.record.pitch, pose.pitch, mode="pitch")
+        yaw_indicator = _pose_indicator_html(pose.record.yaw, pose.yaw, mode="yaw")
+        pitch_indicator = _pose_indicator_html(
+            pose.record.pitch, pose.pitch, mode="pitch"
+        )
         status = "FIXED" if pose.modified else ""
         dirty = " *" if pose.dirty else ""
         pitch_text = _delta_text(pose.record.pitch, pose.pitch, prefix="p")
@@ -297,11 +395,9 @@ class AnnotatorUI:
         return f"""
         <div title="{html.escape(pose.record.image)}">
           <div style="position:relative">
-            <img src="{html.escape(url)}" loading="lazy" />
-            <div style="position:absolute;left:4px;bottom:4px;display:flex;gap:4px">
-              <div style="width:46px;height:46px;flex:0 0 46px">{pitch_svg}</div>
-              <div style="width:46px;height:46px;flex:0 0 46px">{yaw_svg}</div>
-            </div>
+            <img class="pose-photo" src="{html.escape(url)}" loading="lazy" />
+            {pitch_indicator}
+            {yaw_indicator}
           </div>
           <div class="pose-meta" style="margin-top:4px">
             <div>{html.escape(pose.record.source)}</div>
@@ -321,6 +417,20 @@ class AnnotatorUI:
         return f"SixD Δ{error:.1f}° {reliability}"
 
 
+def _pagination_items(current: int, page_count: int) -> list[int | None]:
+    visible = {1, page_count}
+    visible.update(range(max(1, current - 2), min(page_count, current + 2) + 1))
+    pages = sorted(visible)
+    items: list[int | None] = []
+    previous = 0
+    for page in pages:
+        if previous and page - previous > 1:
+            items.append(None)
+        items.append(page)
+        previous = page
+    return items
+
+
 def _delta_text(original: float | None, current: float | None, *, prefix: str) -> str:
     if original is None:
         return f"{prefix} n/a"
@@ -329,35 +439,61 @@ def _delta_text(original: float | None, current: float | None, *, prefix: str) -
     return f"{prefix}{original:+.1f}→{current:+.1f}"
 
 
-def _indicator_svg(original: float | None, current: float | None, *, mode: str) -> str:
+def _pose_indicator_html(
+    original: float | None, current: float | None, *, mode: str
+) -> str:
     if original is None or current is None:
         return ""
-    size = 46
+    size = 72
     center = size / 2
-    radius = 18
-    old_x, old_y = _endpoint(original, center, radius, mode)
-    new_x, new_y = _endpoint(current, center, radius, mode)
+    radius = 30
+    original_offset = original - current
+    original_x, original_y = _camera_point(original_offset, center, radius, mode)
     label = "Y" if mode == "yaw" else "P"
+    figure = "topview_man.png" if mode == "yaw" else "body_koutoubu_normal_man.png"
+    figure_rotation = current if mode == "yaw" else -current
     return f"""
-    <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}"
-         style="background:rgba(0,0,0,.55);border-radius:50%;display:block">
-      <circle cx="{center}" cy="{center}" r="{radius}" fill="none" stroke="#d1d5db" stroke-width="1"/>
-      <line x1="{center}" y1="{center}" x2="{old_x:.2f}" y2="{old_y:.2f}"
-            stroke="#ef4444" stroke-width="3"/>
-      <line x1="{center}" y1="{center}" x2="{new_x:.2f}" y2="{new_y:.2f}"
-            stroke="#22c55e" stroke-width="3"/>
-      <text x="8" y="12" fill="white" font-size="10" font-weight="700"
-            text-anchor="middle" style="paint-order:stroke;stroke:rgba(0,0,0,.9);stroke-width:2px">{label}</text>
-    </svg>
+    <div class="pose-indicator pose-indicator-{mode}">
+      <img class="pose-indicator-figure" src="/resources/{figure}" alt=""
+           style="transform:rotate({figure_rotation:.2f}deg)" />
+      <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+        {_fixed_camera_line(center, size, mode)}
+        <line x1="{center}" y1="{center}"
+              x2="{original_x:.2f}" y2="{original_y:.2f}"
+              stroke="#ef4444" stroke-width="2.5"/>
+        <circle cx="{original_x:.2f}" cy="{original_y:.2f}"
+                r="4" fill="#ef4444"/>
+        <circle cx="{center}" cy="{center}" r="2.5" fill="#f8fafc"/>
+        <text x="7" y="12" fill="white" font-size="10" font-weight="700"
+              text-anchor="middle"
+              style="paint-order:stroke;stroke:rgba(0,0,0,.9);stroke-width:2px">
+          {label}
+        </text>
+      </svg>
+    </div>
     """
 
 
-def _endpoint(angle: float, center: float, radius: float, mode: str) -> tuple[float, float]:
+def _fixed_camera_line(center: float, size: int, mode: str) -> str:
+    if mode == "yaw":
+        start_x, start_y = center, float(size)
+    else:
+        start_x, start_y = 0.0, center
+    return (
+        f'<line x1="{start_x}" y1="{start_y}" x2="{center}" y2="{center}" '
+        'stroke="#22c55e" stroke-width="2.5"/>'
+        f'<circle cx="{start_x}" cy="{start_y}" r="4" fill="#22c55e"/>'
+    )
+
+
+def _camera_point(
+    angle: float, center: float, radius: float, mode: str
+) -> tuple[float, float]:
     radians = math.radians(angle)
     if mode == "yaw":
         dx = math.sin(radians)
-        dy = -math.cos(radians)
+        dy = math.cos(radians)
     else:
-        dx = math.cos(radians)
+        dx = -math.cos(radians)
         dy = -math.sin(radians)
     return center + radius * dx, center + radius * dy
