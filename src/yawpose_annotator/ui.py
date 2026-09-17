@@ -39,6 +39,33 @@ class AnnotatorUI:
             .pose-card-dirty { box-shadow: inset 0 0 0 2px #38bdf8; }
             .pose-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
             .pose-meta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+            .annotator-field .q-field__native,
+            .annotator-field .q-field__input,
+            .annotator-field .q-field__label,
+            .annotator-field .q-field__marginal {
+                color: #f3f4f6 !important;
+            }
+            .annotator-field .q-field__control::before {
+                border-color: #6b7280 !important;
+            }
+            .annotator-field .q-field__control:hover::before,
+            .annotator-field.q-field--focused .q-field__control::before {
+                border-color: #d1d5db !important;
+            }
+            .annotator-select-popup {
+                background: #1f2937 !important;
+                color: #f3f4f6 !important;
+            }
+            .annotator-select-popup .q-item {
+                color: #f3f4f6 !important;
+            }
+            .annotator-select-popup .q-item--active,
+            .annotator-select-popup .q-item.q-manual-focusable--focused,
+            .annotator-select-popup .q-item:hover {
+                background: #374151 !important;
+                color: #ffffff !important;
+            }
             """
         )
         with ui.column().classes("w-full p-3 gap-2"):
@@ -63,15 +90,27 @@ class AnnotatorUI:
         sources = {"__all__": "all sources"} | {source: source for source in self.service.sources}
         sort_modes = {"dataset": "dataset order", "suspicion": "suspicious first"}
         with ui.row().classes("items-end gap-2 flex-wrap"):
-            source = ui.select(sources, value="__all__", label="source").classes("w-48")
-            yaw_min = ui.number(label="original yaw min", value=0, min=0, max=360, step=1).classes(
-                "w-36"
+            source = (
+                ui.select(sources, value="__all__", label="source")
+                .classes("w-48 annotator-field")
+                .props("dark outlined popup-content-class=annotator-select-popup")
             )
-            yaw_max = ui.number(label="original yaw max", value=360, min=0, max=360, step=1).classes(
-                "w-36"
+            yaw_min = (
+                ui.number(label="original yaw min", value=0, min=0, max=360, step=1)
+                .classes("w-36 annotator-field")
+                .props("dark outlined")
+            )
+            yaw_max = (
+                ui.number(label="original yaw max", value=360, min=0, max=360, step=1)
+                .classes("w-36 annotator-field")
+                .props("dark outlined")
             )
             modified_only = ui.checkbox("modified only", value=False)
-            sort_mode = ui.select(sort_modes, value="dataset", label="sort").classes("w-44")
+            sort_mode = (
+                ui.select(sort_modes, value="dataset", label="sort")
+                .classes("w-44 annotator-field")
+                .props("dark outlined popup-content-class=annotator-select-popup")
+            )
 
             def apply_filter() -> None:
                 self.service.set_filter(
@@ -260,7 +299,8 @@ class AnnotatorUI:
           <div style="position:relative">
             <img src="{html.escape(url)}" loading="lazy" />
             <div style="position:absolute;left:4px;bottom:4px;display:flex;gap:4px">
-              {pitch_svg}{yaw_svg}
+              <div style="width:46px;height:46px;flex:0 0 46px">{pitch_svg}</div>
+              <div style="width:46px;height:46px;flex:0 0 46px">{yaw_svg}</div>
             </div>
           </div>
           <div class="pose-meta" style="margin-top:4px">
@@ -300,13 +340,14 @@ def _indicator_svg(original: float | None, current: float | None, *, mode: str) 
     label = "Y" if mode == "yaw" else "P"
     return f"""
     <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}"
-         style="background:rgba(0,0,0,.55);border-radius:50%">
+         style="background:rgba(0,0,0,.55);border-radius:50%;display:block">
       <circle cx="{center}" cy="{center}" r="{radius}" fill="none" stroke="#d1d5db" stroke-width="1"/>
       <line x1="{center}" y1="{center}" x2="{old_x:.2f}" y2="{old_y:.2f}"
             stroke="#ef4444" stroke-width="3"/>
       <line x1="{center}" y1="{center}" x2="{new_x:.2f}" y2="{new_y:.2f}"
             stroke="#22c55e" stroke-width="3"/>
-      <text x="3" y="10" fill="white" font-size="8">{label}</text>
+      <text x="8" y="12" fill="white" font-size="10" font-weight="700"
+            text-anchor="middle" style="paint-order:stroke;stroke:rgba(0,0,0,.9);stroke-width:2px">{label}</text>
     </svg>
     """
 
