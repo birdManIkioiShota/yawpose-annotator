@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import Correction, EffectivePose, PoseRecord
+from .models import Correction, EffectivePose, PoseRecord, SixDQA
 from .repository import CorrectionRepository
 
 
@@ -16,12 +16,14 @@ class AnnotationService:
         records: list[PoseRecord],
         repository: CorrectionRepository,
         *,
+        qa_records: dict[str, SixDQA] | None = None,
         page_size: int = 30,
     ) -> None:
         if page_size < 1:
             raise ValueError("page_size must be positive")
         self.records = records
         self.records_by_image = {record.image: record for record in records}
+        self.qa_records = qa_records or {}
         self.repository = repository
         loaded_corrections = repository.load()
         self.corrections = {
@@ -40,6 +42,7 @@ class AnnotationService:
         self.yaw_min = 0.0
         self.yaw_max = 360.0
         self.modified_only = False
+        self.sort_mode = "dataset"
         self.selected_image: str | None = None
 
     @property
@@ -61,6 +64,15 @@ class AnnotationService:
             dirty=image in self.drafts,
         )
 
+    def sixd_qa(self, image: str) -> SixDQA | None:
+        return self.qa_records.get(image)
+
+    def sixd_error(self, image: str) -> float | None:
+        qa = self.sixd_qa(image)
+        if qa is None:
+            return None
+        return _circular_distance(self.records_by_image[image].yaw, qa.yaw)
+
     def filtered(self) -> list[EffectivePose]:
         result: list[EffectivePose] = []
         for record in self.records:
@@ -72,7 +84,18 @@ class AnnotationService:
             if self.modified_only and not pose.modified:
                 continue
             result.append(pose)
+        if self.sort_mode == "suspicion":
+            result.sort(key=self._suspicion_sort_key)
         return result
+
+    def _suspicion_sort_key(self, pose: EffectivePose) -> tuple[int, float]:
+        qa = self.sixd_qa(pose.record.image)
+        error = self.sixd_error(pose.record.image)
+        if qa is None or error is None:
+            return (2, 0.0)
+        if not qa.reliable:
+            return (1, -error)
+        return (0, -error)
 
     @property
     def page_count(self) -> int:
@@ -97,6 +120,13 @@ class AnnotationService:
         self.yaw_min = yaw_min % 360.0
         self.yaw_max = 360.0 if yaw_max == 360.0 else yaw_max % 360.0
         self.modified_only = modified_only
+        self.page = 0
+        self.selected_image = None
+
+    def set_sort_mode(self, mode: str) -> None:
+        if mode not in {"dataset", "suspicion"}:
+            raise ValueError(f"unknown sort mode: {mode}")
+        self.sort_mode = mode
         self.page = 0
         self.selected_image = None
 
@@ -217,6 +247,10 @@ def _yaw_in_range(yaw: float, lower: float, upper: float) -> bool:
     if lower <= upper:
         return lower <= yaw <= upper
     return yaw >= lower or yaw <= upper
+
+
+def _circular_distance(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
 def _same(a: float | None, b: float | None, *, eps: float = 1e-6) -> bool:

@@ -16,6 +16,18 @@ class PoseRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class SixDQA:
+    image: str
+    yaw: float
+    pitch: float
+    roll: float | None = None
+
+    @property
+    def reliable(self) -> bool:
+        return abs(self.yaw) >= 10.0 and abs(self.pitch) < 60.0
+
+
+@dataclass(frozen=True, slots=True)
 class Correction:
     image: str
     original_yaw: float

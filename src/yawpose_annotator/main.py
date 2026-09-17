@@ -5,7 +5,7 @@ from pathlib import Path
 
 from nicegui import ui
 
-from .loader import load_records
+from .loader import load_records, load_sixd_qa
 from .repository import CorrectionRepository
 from .service import AnnotationService
 from .ui import AnnotatorUI
@@ -19,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="input JSONL; defaults to <dataset_root>/labels_fixed.jsonl",
+    )
+    parser.add_argument(
+        "--qa",
+        type=Path,
+        default=None,
+        help="SixD QA JSONL; defaults to <dataset_root>/qa_sixd.jsonl",
     )
     parser.add_argument(
         "--corrections",
@@ -42,13 +48,16 @@ def main() -> None:
     args = build_parser().parse_args()
     root = args.dataset_root.expanduser().resolve()
     labels = (args.labels or root / "labels_fixed.jsonl").expanduser().resolve()
+    qa_path = (args.qa or root / "qa_sixd.jsonl").expanduser().resolve()
     corrections = (args.corrections or root / "manual_corrections.jsonl").expanduser().resolve()
     export_path = (args.export or root / "labels_manual_fixed.jsonl").expanduser().resolve()
 
     records = load_records(root, labels)
+    qa_records = load_sixd_qa(qa_path)
     service = AnnotationService(
         records,
         CorrectionRepository(corrections),
+        qa_records=qa_records,
         page_size=args.page_size,
     )
     AnnotatorUI(service, root, export_path).build()

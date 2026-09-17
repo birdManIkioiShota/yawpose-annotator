@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import PoseRecord
+from .models import PoseRecord, SixDQA
 
 
 def load_records(dataset_root: Path, labels_path: Path) -> list[PoseRecord]:
@@ -43,6 +43,31 @@ def load_records(dataset_root: Path, labels_path: Path) -> list[PoseRecord]:
             )
 
     records.sort(key=lambda r: (r.source, r.yaw, r.pitch if r.pitch is not None else 999.0, r.image))
+    return records
+
+
+def load_sixd_qa(qa_path: Path) -> dict[str, SixDQA]:
+    path = qa_path.expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"SixD QA file not found: {path}")
+
+    records: dict[str, SixDQA] = {}
+    with path.open("r", encoding="utf-8") as fh:
+        for line_number, line in enumerate(fh, start=1):
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            try:
+                image = str(data["image"])
+                yaw = float(data["sixd_yaw"])
+                pitch = float(data["sixd_pitch"])
+                roll_raw = data.get("sixd_roll")
+                roll = None if roll_raw is None else float(roll_raw)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid SixD QA row at {path}:{line_number}") from exc
+            if image in records:
+                raise ValueError(f"duplicate image key at {path}:{line_number}: {image}")
+            records[image] = SixDQA(image=image, yaw=yaw, pitch=pitch, roll=roll)
     return records
 
 

@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from yawpose_annotator.models import PoseRecord
+import pytest
+
+from yawpose_annotator.models import PoseRecord, SixDQA
 from yawpose_annotator.repository import CorrectionRepository
 from yawpose_annotator.service import AnnotationService
 
@@ -44,3 +46,43 @@ def test_wraparound_filter(tmp_path: Path) -> None:
     service.set_filter(source=None, yaw_min=340, yaw_max=20, modified_only=False)
 
     assert [pose.record.image for pose in service.filtered()] == ["a.jpg", "b.jpg"]
+
+
+def test_suspicion_sort_prioritizes_reliable_disagreement(tmp_path: Path) -> None:
+    records = [
+        record("a.jpg", 30),
+        record("b.jpg", 30),
+        record("c.jpg", 30),
+        record("d.jpg", 30),
+    ]
+    qa_records = {
+        "a.jpg": SixDQA(image="a.jpg", yaw=90, pitch=0),
+        "b.jpg": SixDQA(image="b.jpg", yaw=40, pitch=0),
+        "c.jpg": SixDQA(image="c.jpg", yaw=-150, pitch=70),
+    }
+    service = AnnotationService(
+        records,
+        CorrectionRepository(tmp_path / "corrections.jsonl"),
+        qa_records=qa_records,
+    )
+
+    service.set_sort_mode("suspicion")
+
+    assert [pose.record.image for pose in service.filtered()] == [
+        "a.jpg",
+        "b.jpg",
+        "c.jpg",
+        "d.jpg",
+    ]
+    assert service.sixd_error("a.jpg") == 60
+    assert service.sixd_error("c.jpg") == 180
+
+
+def test_rejects_unknown_sort_mode(tmp_path: Path) -> None:
+    service = AnnotationService(
+        [record("a.jpg", 30)],
+        CorrectionRepository(tmp_path / "corrections.jsonl"),
+    )
+
+    with pytest.raises(ValueError, match="unknown sort mode"):
+        service.set_sort_mode("invalid")

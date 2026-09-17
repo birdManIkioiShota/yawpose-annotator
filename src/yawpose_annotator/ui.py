@@ -61,6 +61,7 @@ class AnnotatorUI:
 
     def _build_controls(self) -> None:
         sources = {"__all__": "all sources"} | {source: source for source in self.service.sources}
+        sort_modes = {"dataset": "dataset order", "suspicion": "suspicious first"}
         with ui.row().classes("items-end gap-2 flex-wrap"):
             source = ui.select(sources, value="__all__", label="source").classes("w-48")
             yaw_min = ui.number(label="original yaw min", value=0, min=0, max=360, step=1).classes(
@@ -70,6 +71,7 @@ class AnnotatorUI:
                 "w-36"
             )
             modified_only = ui.checkbox("modified only", value=False)
+            sort_mode = ui.select(sort_modes, value="dataset", label="sort").classes("w-44")
 
             def apply_filter() -> None:
                 self.service.set_filter(
@@ -78,6 +80,7 @@ class AnnotatorUI:
                     yaw_max=float(yaw_max.value if yaw_max.value is not None else 360),
                     modified_only=bool(modified_only.value),
                 )
+                self.service.set_sort_mode(str(sort_mode.value))
                 self._render_page()
                 self._update_status()
 
@@ -223,7 +226,7 @@ class AnnotatorUI:
         self.status_label.set_text(
             f"records={len(self.service.records):,}  filtered={self.filtered_count:,}  "
             f"modified={self.service.modified_count:,}  staged={self.service.dirty_count:,}  "
-            f"selected={selected}"
+            f"sort={self.service.sort_mode}  selected={selected}"
         )
         self._update_page_label()
 
@@ -251,6 +254,7 @@ class AnnotatorUI:
         dirty = " *" if pose.dirty else ""
         pitch_text = _delta_text(pose.record.pitch, pose.pitch, prefix="p")
         yaw_text = _delta_text(pose.record.yaw, pose.yaw, prefix="y")
+        qa_text = self._qa_text(pose.record.image)
         return f"""
         <div title="{html.escape(pose.record.image)}">
           <div style="position:relative">
@@ -263,9 +267,18 @@ class AnnotatorUI:
             <div>{html.escape(pose.record.source)}</div>
             <div>{status}{dirty} {yaw_text}</div>
             <div>{pitch_text}</div>
+            <div>{qa_text}</div>
           </div>
         </div>
         """
+
+    def _qa_text(self, image: str) -> str:
+        qa = self.service.sixd_qa(image)
+        error = self.service.sixd_error(image)
+        if qa is None or error is None:
+            return "SixD n/a"
+        reliability = "reliable" if qa.reliable else "unreliable"
+        return f"SixD Δ{error:.1f}° {reliability}"
 
 
 def _delta_text(original: float | None, current: float | None, *, prefix: str) -> str:
